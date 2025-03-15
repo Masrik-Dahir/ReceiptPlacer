@@ -21,12 +21,11 @@ def lambda_handler(event, context):
     # -----------------------------------------------------------
     # 0. Configuration: folder, secrets, region, etc.
     # -----------------------------------------------------------
-    parent_folder_id = event.get('parent_folder_id') or os.getenv('PARENT_FOLDER_ID')
+    parent_folder_id = event.get('PARENT_FOLDER_ID') or os.getenv('PARENT_FOLDER_ID')
     if not parent_folder_id:
         raise ValueError("No parent_folder_id provided via event or environment.")
-
-    region_name = os.getenv('REGION_NAME', 'us-east-1')
-    secret_name = os.getenv('SECRET_NAME', 'my-google-service-account')
+    region_name = event.get('REGION_NAME') or os.getenv('REGION_NAME', 'us-east-1')
+    secret_name = event.get('SECRET_NAME') or os.getenv('SECRET_NAME', 'my-google-service-account')
 
     # -----------------------------------------------------------
     # 1. Retrieve Service Account credentials from AWS Secrets Manager
