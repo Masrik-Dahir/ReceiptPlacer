@@ -25,7 +25,7 @@ def lambda_handler(event, context):
     if not parent_folder_id:
         raise ValueError("No parent_folder_id provided via event or environment.")
     region_name = event.get('REGION_NAME') or os.getenv('REGION_NAME', 'us-east-1')
-    secret_name = event.get('SECRET_NAME') or os.getenv('SECRET_NAME', 'my-google-service-account')
+    secret_name = event.get('SECRET_NAME') or os.getenv('SECRET_NAME', 'google_drive_api')
 
     # -----------------------------------------------------------
     # 1. Retrieve Service Account credentials from AWS Secrets Manager
