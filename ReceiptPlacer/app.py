@@ -3,10 +3,65 @@ import re
 import json
 import boto3
 import datetime
-
+import mimetypes
+import subprocess
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from urllib.parse import quote
+import io
+import re
+
+s3 = boto3.client('s3')
+S3_BUCKET = 'masrikdahir-files'
+
+def get_full_drive_path(file_id, drive_service):
+    """
+    Recursively build the folder path for a file.
+    If no parents, assume it's in root and return ''.
+    """
+    path_parts = []
+
+    try:
+        file = drive_service.files().get(
+            fileId=file_id,
+            fields='id, name, parents, mimeType'
+        ).execute()
+
+        # If this is a file (not a folder), get its first parent
+        if file['mimeType'] != 'application/vnd.google-apps.folder':
+            parents = file.get('parents')
+            if not parents:
+                return ''  # file has no parent (e.g. shared or in root)
+            parent_id = parents[0]
+        else:
+            # If it's a folder (called recursively), get its parent
+            parent_id = file.get('parents', [None])[0]
+
+        # Traverse up the tree
+        while parent_id:
+            parent = drive_service.files().get(
+                fileId=parent_id,
+                fields='id, name, parents, mimeType'
+            ).execute()
+
+            if parent['mimeType'] != 'application/vnd.google-apps.folder':
+                break
+
+            path_parts.insert(0, parent['name'])
+            parent_id = parent.get('parents', [None])[0]
+
+    except Exception as e:
+        print(f"❌ Failed to get full path for file {file_id}: {e}")
+        return ''
+
+    return "/".join(path_parts)
+
+
+def sanitize_s3_key_component(name):
+    """Sanitize a filename for use in Lambda's /tmp directory."""
+    return re.sub(r'[^a-zA-Z0-9_.()-]', '_', name)
 
 
 def lambda_handler(event, context):
@@ -183,7 +238,37 @@ def lambda_handler(event, context):
             print(f"Skipping folder '{file_name}' (id={file_id}).")
             continue
 
-        # Attempt to match the filename
+        # 7a. Get Google Drive folder path
+        try:
+            drive_path = get_full_drive_path(file_id, drive_service)  # e.g., 'Receipts/2025/July'
+            drive_path_sanitized = "/".join([sanitize_s3_key_component(p) for p in drive_path.split("/")])
+        except Exception as e:
+            print(f"❌ Failed to resolve path for {file_name}: {e}")
+            continue
+
+        # 7b. Prepare full S3 key
+        safe_file_name = sanitize_s3_key_component(file_name)
+        s3_key = f"{drive_path_sanitized}/{safe_file_name}"  # final S3 key
+
+        # 7c. Download from Google Drive into memory
+        try:
+            request = drive_service.files().get_media(fileId=file_id)
+            file_stream = io.BytesIO()
+            downloader = MediaIoBaseDownload(file_stream, request)
+
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+
+            # 7d. Upload to S3
+            file_stream.seek(0)
+            s3.upload_fileobj(file_stream, S3_BUCKET, s3_key)
+            print(f"✅ Uploaded to S3: s3://{S3_BUCKET}/{s3_key}")
+        except Exception as e:
+            print(f"❌ Failed to download or upload '{file_name}': {e}")
+            continue
+
+        # Match regex or use createdTime to get year/month
         m = pattern.match(file_name)
 
         try:
@@ -218,6 +303,9 @@ def lambda_handler(event, context):
 
             processed_count += 1
         except Exception as e:
+            print(f"❌ Skipping file '{file_name}' (id={file_id}) due to error: {e}")
+
+        except Exception as e:
             print(f"Skipping file '{file_name}' (id={file_id}) due to error: {e}")
 
     return {
@@ -227,3 +315,5 @@ def lambda_handler(event, context):
             "totalItemsFound": len(items)
         })
     }
+
+lambda_handler({},{})
