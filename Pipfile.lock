@@ -1,0 +1,25 @@
+{
+    "_meta": {
+        "hash": {
+            "sha256": "92014cf7235afa75c51627c2e28759018a6b9b93806d05952dc4d22cdeb9cb44"
+        },
+        "pipfile-spec": 6,
+        "requires": {
+            "python_version": "3.12"
+        },
+        "sources": [
+            {
+                "name": "pypi",
+                "url": "https://pypi.org/simple",
+                "verify_ssl": true
+            }
+        ]
+    },
+    "default": {
+        "boto3": "*",
+        "google-api-python-client": "*",
+        "google-auth": "*",
+        "google-oauth2-tool": "*"
+    },
+    "develop": {}
+}

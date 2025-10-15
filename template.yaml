@@ -16,7 +16,7 @@ Resources:
         Variables:
           SECRET_NAME: "google_drive_api"
           REGION_NAME: "us-east-1"
-          PARENT_FOLDER_ID:
+          PARENT_FOLDER_ID: ""
 
   ReceiptPlacerRole:
     Type: AWS::IAM::Role
