@@ -8,6 +8,7 @@ boto3="*"
 google-oauth2-tool="*"
 google-auth="*"
 google-api-python-client="*"
+requests="*"
 
 [dev-packages]
 

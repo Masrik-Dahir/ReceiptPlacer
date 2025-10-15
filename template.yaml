@@ -6,8 +6,8 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: ReceiptPlacer
-      Handler: app.lambda_handler  # Update to match ReceiptPlacer/app.py
-      CodeUri: ReceiptPlacer/  # Point to the directory containing app.py
+      Handler: ReceiptPlacer.app.lambda_handler  # Update to match ReceiptPlacer/app.py
+      CodeUri: .  # Point to the directory containing app.py
       Runtime: python3.12
       Timeout: 30
       MemorySize: 128
