@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import uuid
 import boto3
 import datetime
 import mimetypes
@@ -15,6 +16,18 @@ import re
 
 s3 = boto3.client('s3')
 S3_BUCKET = 'masrikdahir-files'
+
+def _truthy(v):
+    return str(v).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+def _append_guid_to_filename(name: str, guid: str) -> str:
+    """
+    Append -<guid> just before the extension.
+    'Receipt.pdf' -> 'Receipt-<guid>.pdf'
+    'noext'       -> 'noext-<guid>'
+    """
+    base, ext = os.path.splitext(name)
+    return f"{base}-{guid}{ext}"
 
 def get_full_drive_path(file_id, drive_service):
     """
@@ -60,7 +73,7 @@ def get_full_drive_path(file_id, drive_service):
 
 
 def sanitize_s3_key_component(name):
-    """Sanitize a filename for use in Lambda's /tmp directory."""
+    """Sanitize a filename for use in Lambda's /tmp directory and S3 keys."""
     return re.sub(r'[^a-zA-Z0-9_.()-]', '_', name)
 
 
@@ -71,6 +84,7 @@ def lambda_handler(event, context):
       - If filename matches our date regex, parse date from name.
       - Otherwise, use file's createdTime to determine year/month.
       - Organize the file into a year => month folder structure.
+      - Upload to S3 with optional GUID appended to the filename when triggered by an event.
     """
 
     # -----------------------------------------------------------
@@ -81,6 +95,12 @@ def lambda_handler(event, context):
         raise ValueError("No parent_folder_id provided via event or environment.")
     region_name = event.get('REGION_NAME') or os.getenv('REGION_NAME', 'us-east-1')
     secret_name = event.get('SECRET_NAME') or os.getenv('SECRET_NAME', 'google_drive_api')
+
+    # Enable GUID appending when invoked with an event (default True).
+    # You can control via event['ADD_GUID'] / event['APPEND_GUID'] or env vars.
+    add_guid = _truthy(
+        event.get('ADD_GUID', event.get('APPEND_GUID', os.getenv('ADD_GUID', 'true')))
+    )
 
     # -----------------------------------------------------------
     # 1. Retrieve Service Account credentials from AWS Secrets Manager
@@ -120,9 +140,9 @@ def lambda_handler(event, context):
         r'.*('
         r'(?:[A-Za-z]{3}\s+\d{1,2},\s+\d{4})'  # "Feb 27, 2025"
         r'|'
-        r'(?:\d{1,2}/\d{1,2}/\d{4})'  # "02/27/2025"
+        r'(?:\d{1,2}/\d{1,2}/\d{4})'          # "02/27/2025"
         r'|'
-        r'(?:\d{4}-\d{1,2}-\d{1,2})'  # "2025-02-27"
+        r'(?:\d{4}-\d{1,2}-\d{1,2})'          # "2025-02-27"
         r')'
         r'.*$',
         re.IGNORECASE
@@ -191,11 +211,10 @@ def lambda_handler(event, context):
           - "2025-02-27"
         Return a (year, month) tuple or raise ValueError if unrecognized.
         """
-        # Try different formats in sequence:
         formats = [
             "%b %d, %Y",  # "Feb 27, 2025"
-            "%m/%d/%Y",  # "02/27/2025"
-            "%Y-%m-%d",  # "2025-02-27"
+            "%m/%d/%Y",   # "02/27/2025"
+            "%Y-%m-%d",   # "2025-02-27"
         ]
         for fmt in formats:
             try:
@@ -241,14 +260,18 @@ def lambda_handler(event, context):
         # 7a. Get Google Drive folder path
         try:
             drive_path = get_full_drive_path(file_id, drive_service)  # e.g., 'Receipts/2025/July'
-            drive_path_sanitized = "/".join([sanitize_s3_key_component(p) for p in drive_path.split("/")])
+            drive_path_sanitized = "/".join([sanitize_s3_key_component(p) for p in drive_path.split("/")]) if drive_path else ""
         except Exception as e:
             print(f"❌ Failed to resolve path for {file_name}: {e}")
             continue
 
-        # 7b. Prepare full S3 key
+        # 7b. Prepare S3 key: sanitize filename, optionally append GUID
         safe_file_name = sanitize_s3_key_component(file_name)
-        s3_key = f"{drive_path_sanitized}/{safe_file_name}"  # final S3 key
+        if add_guid:
+            safe_file_name = _append_guid_to_filename(safe_file_name, uuid.uuid4().hex)
+
+        # Build final key, keeping the Drive path (if any)
+        s3_key = f"{drive_path_sanitized}/{safe_file_name}" if drive_path_sanitized else safe_file_name
 
         # 7c. Download from Google Drive into memory
         try:
@@ -277,8 +300,7 @@ def lambda_handler(event, context):
                 date_substring = m.group(1)
                 year, month = parse_date_string(date_substring)
             else:
-                # Fallback: use the file's createdTime
-                # (e.g. "2025-02-27T15:00:03.000Z")
+                # Fallback: use the file's createdTime (e.g. "2025-02-27T15:00:03.000Z")
                 created_str = info.get('createdTime')
                 dt = datetime.fromisoformat(created_str.replace('Z', '+00:00'))
                 year = dt.year
@@ -305,15 +327,13 @@ def lambda_handler(event, context):
         except Exception as e:
             print(f"❌ Skipping file '{file_name}' (id={file_id}) due to error: {e}")
 
-        except Exception as e:
-            print(f"Skipping file '{file_name}' (id={file_id}) due to error: {e}")
-
     return {
         "statusCode": 200,
         "body": json.dumps({
             "message": f"Processed {processed_count} files in folder {parent_folder_id}.",
-            "totalItemsFound": len(items)
+            "totalItemsFound": len(items),
+            "guid_appended": bool(add_guid)
         })
     }
 
-lambda_handler({},{})
+# lambda_handler({},{})
